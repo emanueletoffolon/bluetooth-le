@@ -313,6 +313,24 @@ export interface BleClientInterface {
    * @param characteristic UUID of the characteristic (see [UUID format](#uuid-format))
    */
   stopNotifications(deviceId: string, service: string, characteristic: string): Promise<void>;
+
+  /**
+   * Set the title and optional body text of the BLE foreground service persistent notification.
+   * Can be called before or after `startForegroundService()`. **Android only.**
+   */
+  setForegroundServiceNotification(options: { title: string; body?: string }): Promise<void>;
+  /**
+   * Start the BLE Foreground Service. **Android only.**
+   * Call this before `requestLEScan` or `connect` to enable background BLE scanning and connections.
+   * A persistent notification will be shown while the service is active.
+   */
+  startForegroundService(): Promise<void>;
+
+  /**
+   * Stop the BLE Foreground Service. **Android only.**
+   * Stops the ongoing scan and disconnects all GATT connections managed by the service.
+   */
+  stopForegroundService(): Promise<void>;
 }
 
 class BleClientClass implements BleClientInterface {
@@ -713,6 +731,45 @@ class BleClientClass implements BleClientInterface {
         service,
         characteristic,
       });
+    });
+  }
+
+  async setForegroundServiceNotification(options: { title: string; body?: string }): Promise<void> {
+    await this.queue(async () => {
+      await BluetoothLe.setForegroundServiceNotification(options);
+    });
+  }
+
+  async startForegroundService(): Promise<void> {
+    await this.queue(async () => {
+      await BluetoothLe.startForegroundService();
+    });
+  }
+
+  async stopForegroundService(): Promise<void> {
+    await this.queue(async () => {
+      await BluetoothLe.stopForegroundService();
+    });
+  }
+
+  async startLeScanBackground(options: { deviceId: string }): Promise<void> {
+    await this.queue(async () => {
+      await BluetoothLe.startLeScanBackground(options);
+    });
+  }
+
+  async stopLeScanBackground(): Promise<void> {
+    await this.queue(async () => {
+      await BluetoothLe.stopLeScanBackground();
+    });
+  }
+
+  async getLastFoundDevice(): Promise<
+    | { found: false }
+    | { found: true; device: BleDevice; localName?: string; rssi?: number }
+  > {
+    return this.queue(async () => {
+      return BluetoothLe.getLastFoundDevice();
     });
   }
 

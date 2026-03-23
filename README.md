@@ -89,6 +89,9 @@ Below is an index of all the methods available.
 - [`writeDescriptor(...)`](#writedescriptor)
 - [`startNotifications(...)`](#startnotifications)
 - [`stopNotifications(...)`](#stopnotifications)
+- [`setForegroundServiceNotification(...)`](#setforegroundservicenotification)
+- [`startForegroundService()`](#startforegroundservice)
+- [`stopForegroundService()`](#stopforegroundservice)
 - [Interfaces](#interfaces)
 - [Enums](#enums)
 
@@ -899,6 +902,44 @@ Stop listening to the changes of the value of a characteristic. For an example, 
 | **`deviceId`**       | <code>string</code> | The ID of the device to use (obtained from [requestDevice](#requestDevice) or [requestLEScan](#requestLEScan)) |
 | **`service`**        | <code>string</code> | UUID of the service (see [UUID format](#uuid-format))                                                          |
 | **`characteristic`** | <code>string</code> | UUID of the characteristic (see [UUID format](#uuid-format))                                                   |
+
+---
+
+### setForegroundServiceNotification(...)
+
+```typescript
+setForegroundServiceNotification(options: { title: string; body?: string; }) => Promise<void>
+```
+
+Set the title and optional body text of the BLE foreground service persistent notification.
+Can be called before or after `startForegroundService()`. **Android only.**
+
+| Param         | Type                                           |
+| ------------- | ---------------------------------------------- |
+| **`options`** | <code>{ title: string; body?: string; }</code> |
+
+---
+
+### startForegroundService()
+
+```typescript
+startForegroundService() => Promise<void>
+```
+
+Start the BLE Foreground Service. **Android only.**
+Call this before `requestLEScan` or `connect` to enable background BLE scanning and connections.
+A persistent notification will be shown while the service is active.
+
+---
+
+### stopForegroundService()
+
+```typescript
+stopForegroundService() => Promise<void>
+```
+
+Stop the BLE Foreground Service. **Android only.**
+Stops the ongoing scan and disconnects all GATT connections managed by the service.
 
 ---
 

@@ -367,6 +367,26 @@ export class BluetoothLeWeb extends WebPlugin implements BluetoothLePlugin {
     await characteristic?.stopNotifications();
   }
 
+  async startForegroundService(): Promise<void> {
+    throw this.unavailable('startForegroundService is not available on web.');
+  }
+
+  async stopForegroundService(): Promise<void> {
+    throw this.unavailable('stopForegroundService is not available on web.');
+  }
+
+  async startLeScanBackground(_options: { deviceId: string }): Promise<void> {
+    throw this.unavailable('startLeScanBackground is not available on web.');
+  }
+
+  async stopLeScanBackground(): Promise<void> {
+    throw this.unavailable('stopLeScanBackground is not available on web.');
+  }
+
+  async getLastFoundDevice(): Promise<{ found: false } | { found: true; device: BleDevice; localName?: string; rssi?: number }> {
+    throw this.unavailable('getLastFoundDevice is not available on web.');
+  }
+
   private getFilters(options?: RequestBleDeviceOptions): BluetoothLEScanFilter[] {
     const filters: BluetoothLEScanFilter[] = [];
     for (const service of options?.services ?? []) {

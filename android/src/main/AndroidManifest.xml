@@ -15,9 +15,26 @@
   <uses-permission
     android:name="android.permission.BLUETOOTH_CONNECT"
     tools:targetApi="s" />
+  <!-- Foreground Service -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission
+    android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
+    tools:targetApi="34" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
 
   <uses-feature
     android:name="android.hardware.bluetooth_le"
     android:required="false" />
+
+  <application>
+    <service
+      android:name=".BleForegroundService"
+      android:enabled="true"
+      android:exported="false"
+      android:foregroundServiceType="connectedDevice" />
+    <receiver
+      android:name=".BleScanReceiver"
+      android:exported="false" />
+  </application>
 </manifest>
   

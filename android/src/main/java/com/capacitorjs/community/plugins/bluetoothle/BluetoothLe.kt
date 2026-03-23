@@ -14,13 +14,16 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
+import android.os.IBinder
 import android.os.ParcelUuid
 import android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS
 import android.provider.Settings.ACTION_BLUETOOTH_SETTINGS
@@ -96,8 +99,39 @@ class BluetoothLe : Plugin() {
     private var displayStrings: DisplayStrings? = null
     private var aliases: Array<String> = arrayOf()
 
+    // Foreground service support
+    private var bleService: BleForegroundService? = null
+    private var startForegroundServiceCall: PluginCall? = null
+    // Tracks which deviceIds were connected via the foreground service (service context)
+    private val foregroundServiceDeviceIds = HashSet<String>()
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as BleForegroundService.BleForegroundServiceBinder
+            bleService = binder.getService()
+            startForegroundServiceCall?.resolve()
+            startForegroundServiceCall = null
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            bleService = null
+        }
+    }
+
     override fun load() {
         displayStrings = getDisplayStrings()
+    }
+
+    override fun handleOnDestroy() {
+        val service = bleService
+        if (service != null) {
+            try {
+                context.unbindService(serviceConnection)
+            } catch (e: IllegalArgumentException) {
+                Logger.error(TAG, "Error unbinding foreground service: ${e.localizedMessage}", e)
+            }
+            bleService = null
+        }
     }
 
     @PluginMethod
@@ -353,6 +387,35 @@ class BluetoothLe : Plugin() {
         val namePrefix = call.getString("namePrefix", "") as String
         val allowDuplicates = call.getBoolean("allowDuplicates", false) as Boolean
 
+        // When the foreground service is bound, route the scan through it so that
+        // scanning continues in the background and during screen-off.
+        val service = bleService
+        if (service != null) {
+            service.startScan(
+                scanFilters,
+                scanSettings,
+                allowDuplicates,
+                namePrefix,
+                displayStrings!!,
+                { scanResponse ->
+                    if (scanResponse.success) {
+                        call.resolve()
+                    } else {
+                        call.reject(scanResponse.message)
+                    }
+                },
+                { result ->
+                    val scanResult = getScanResult(result)
+                    try {
+                        notifyListeners("onScanResult", scanResult)
+                    } catch (e: ConcurrentModificationException) {
+                        Logger.error(TAG, "Error in notifyListeners: ${e.localizedMessage}", e)
+                    }
+                }
+            )
+            return
+        }
+
         try {
             deviceScanner?.stopScanning()
         } catch (e: IllegalStateException) {
@@ -397,12 +460,152 @@ class BluetoothLe : Plugin() {
     @PluginMethod
     fun stopLEScan(call: PluginCall) {
         assertBluetoothAdapter(call) ?: return
+        val service = bleService
+        if (service != null) {
+            service.stopScan()
+            call.resolve()
+            return
+        }
         try {
             deviceScanner?.stopScanning()
         } catch (e: IllegalStateException) {
             Logger.error(TAG, "Error in stopLEScan: ${e.localizedMessage}", e)
         }
         call.resolve()
+    }
+
+    /**
+     * Set the title and optional body text of the BLE foreground service notification.
+     * Can be called before or after startForegroundService().
+     * If the service is already running, the notification is updated immediately.
+     */
+    @PluginMethod
+    fun setForegroundServiceNotification(call: PluginCall) {
+        val title = call.getString("title") ?: run {
+            call.reject("title is required")
+            return
+        }
+        val body = call.getString("body") ?: ""
+        val service = bleService
+        if (service != null) {
+            service.updateNotification(title, body)
+        } else {
+            BleForegroundService.notificationTitle = title
+            BleForegroundService.notificationText = body
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun startForegroundService(call: PluginCall) {
+        if (bleService != null) {
+            call.resolve()
+            return
+        }
+        startForegroundServiceCall = call
+        val intent = Intent(context, BleForegroundService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    @PluginMethod
+    fun stopForegroundService(call: PluginCall) {
+        val service = bleService
+        if (service != null) {
+            // Stop any ongoing scan owned by the service
+            try {
+                service.stopScan()
+            } catch (e: Exception) {
+                Logger.error(TAG, "Error stopping foreground service scan: ${e.localizedMessage}", e)
+            }
+            // Disconnect all devices that were connected through the foreground service
+            val deviceIds = foregroundServiceDeviceIds.toList()
+            foregroundServiceDeviceIds.clear()
+            deviceIds.forEach { deviceId ->
+                val device = deviceMap.remove(deviceId)
+                service.removeDevice(deviceId)
+                device?.cleanup()
+            }
+            try {
+                context.unbindService(serviceConnection)
+            } catch (e: IllegalArgumentException) {
+                Logger.error(TAG, "Error unbinding foreground service: ${e.localizedMessage}", e)
+            }
+            context.stopService(Intent(context, BleForegroundService::class.java))
+            bleService = null
+        }
+        call.resolve()
+    }
+
+    /**
+     * Start a PendingIntent-based BLE background scan for the specified paired device.
+     * Results are delivered to BleScanReceiver natively, without needing the WebView active.
+     * Poll for results using getLastFoundDevice().
+     * Requires startForegroundService() to have been called first.
+     */
+    @PluginMethod
+    fun startLeScanBackground(call: PluginCall) {
+        val service = bleService ?: run {
+            call.reject("BLE Foreground Service not running. Call startForegroundService() first.")
+            return
+        }
+        val deviceId = call.getString("deviceId") ?: run {
+            call.reject("deviceId required.")
+            return
+        }
+        val started = service.startPendingIntentScan(deviceId)
+        if (started) {
+            call.resolve()
+        } else {
+            call.reject("Could not start background scan. Bluetooth may be unavailable.")
+        }
+    }
+
+    /**
+     * Stop the PendingIntent-based BLE background scan.
+     */
+    @PluginMethod
+    fun stopLeScanBackground(call: PluginCall) {
+        bleService?.stopPendingIntentScan()
+        call.resolve()
+    }
+
+    /**
+     * Get the last scan result from the PendingIntent background scan.
+     * Returns { found: false } if no device has been found yet,
+     * or { found: true, device, localName, rssi } if found.
+     */
+    @PluginMethod
+    fun getLastFoundDevice(call: PluginCall) {
+        val result = BleForegroundService.lastFoundResult
+        if (result != null) {
+            val ret = JSObject()
+            ret.put("found", true)
+            val scanResult = getScanResult(result)
+            ret.put("device", scanResult.getJSObject("device"))
+            ret.put("localName", scanResult.getString("localName"))
+            ret.put("rssi", scanResult.optInt("rssi", 0))
+            call.resolve(ret)
+            return
+        }
+        // OEM bug fallback: device was found via callbackType=FIRST_MATCH but results were empty
+        val foundDeviceId = BleForegroundService.lastFoundDeviceId
+        if (foundDeviceId != null) {
+            val ret = JSObject()
+            ret.put("found", true)
+            val device = JSObject()
+            device.put("deviceId", foundDeviceId)
+            ret.put("device", device)
+            call.resolve(ret)
+            return
+        }
+        val ret = JSObject()
+        ret.put("found", false)
+        call.resolve(ret)
     }
 
     @PluginMethod
@@ -461,9 +664,41 @@ class BluetoothLe : Plugin() {
 
     @PluginMethod
     fun connect(call: PluginCall) {
-        val device = getOrCreateDevice(call) ?: return
         val timeout = call.getFloat("timeout", CONNECTION_TIMEOUT)!!.toLong()
         val skipDescriptorDiscovery = call.getBoolean("skipDescriptorDiscovery", false)!!
+
+        // When the foreground service is bound, create the Device with the service as
+        // Context so that connectGatt() is owned by the service. This keeps the GATT
+        // connection alive in the background.
+        val service = bleService
+        if (service != null) {
+            assertBluetoothAdapter(call) ?: return
+            val deviceId = getDeviceId(call) ?: return
+            val device = deviceMap.getOrElse(deviceId) {
+                val newDevice = service.createDevice(deviceId) {
+                    deviceMap.remove(deviceId)
+                    foregroundServiceDeviceIds.remove(deviceId)
+                    onDisconnect(deviceId)
+                }
+                if (newDevice == null) {
+                    call.reject("Invalid deviceId")
+                    return
+                }
+                deviceMap[deviceId] = newDevice
+                foregroundServiceDeviceIds.add(deviceId)
+                newDevice
+            }
+            device.connect(timeout, skipDescriptorDiscovery) { response ->
+                if (response.success) {
+                    call.resolve()
+                } else {
+                    call.reject(response.value)
+                }
+            }
+            return
+        }
+
+        val device = getOrCreateDevice(call) ?: return
         device.connect(timeout, skipDescriptorDiscovery) { response ->
             run {
                 if (response.success) {
@@ -514,8 +749,13 @@ class BluetoothLe : Plugin() {
         device.disconnect(timeout) { response ->
             run {
                 if (response.success) {
+                    val deviceId = device.getId()
                     device.cleanup()
-                    deviceMap.remove(device.getId())
+                    deviceMap.remove(deviceId)
+                    // Also remove from the foreground service tracking if applicable
+                    if (foregroundServiceDeviceIds.remove(deviceId)) {
+                        bleService?.removeDevice(deviceId)
+                    }
                     call.resolve()
                 } else {
                     call.reject(response.value)

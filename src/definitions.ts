@@ -392,4 +392,38 @@ export interface BluetoothLePlugin {
   writeDescriptor(options: WriteDescriptorOptions & TimeoutOptions): Promise<void>;
   startNotifications(options: ReadOptions & TimeoutOptions): Promise<void>;
   stopNotifications(options: ReadOptions): Promise<void>;
+  /**
+   * Set the title and optional body text of the BLE foreground service persistent notification.
+   * Can be called before or after `startForegroundService()`. **Android only.**
+   */
+  setForegroundServiceNotification(options: { title: string; body?: string }): Promise<void>;
+  /**
+   * Start the BLE Foreground Service. **Android only.**
+   * Must be called before `requestLEScan` or `connect` for background BLE to work.
+   */
+  startForegroundService(): Promise<void>;
+  /**
+   * Stop the BLE Foreground Service. **Android only.**
+   * Stops any ongoing scan and disconnects all devices managed by the service.
+   */
+  stopForegroundService(): Promise<void>;
+  /**
+   * Start a PendingIntent-based BLE background scan for a specific paired device.
+   * Unlike regular BLE scan, results are delivered natively to a BroadcastReceiver
+   * without needing the WebView to be active. Poll results with `getLastFoundDevice()`.
+   * Requires `startForegroundService()` to have been called first. **Android only.**
+   */
+  startLeScanBackground(options: { deviceId: string }): Promise<void>;
+  /**
+   * Stop the PendingIntent-based BLE background scan. **Android only.**
+   */
+  stopLeScanBackground(): Promise<void>;
+  /**
+   * Get the last result from the PendingIntent background scan. **Android only.**
+   * Returns `{ found: false }` if no device found yet, or the device info if found.
+   */
+  getLastFoundDevice(): Promise<
+    | { found: false }
+    | { found: true; device: BleDevice; localName?: string; rssi?: number }
+  >;
 }
