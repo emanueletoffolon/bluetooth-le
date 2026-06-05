@@ -631,7 +631,7 @@ and [getDevices](https://developer.mozilla.org/en-US/docs/Web/API/Bluetooth/getD
 ### connect(...)
 
 ```typescript
-connect(deviceId: string, onDisconnect?: ((deviceId: string) => void) | undefined, options?: ConnectClientOptions | undefined) => Promise<void>
+connect(deviceId: string, onDisconnect?: ((deviceId: string, gattStatus?: number | undefined) => void) | undefined, options?: ConnectClientOptions | undefined) => Promise<void>
 ```
 
 Connect to a peripheral BLE device. For an example, see [usage](#usage).
@@ -639,7 +639,7 @@ Connect to a peripheral BLE device. For an example, see [usage](#usage).
 | Param              | Type                                                                  | Description                                                                                                    |
 | ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | **`deviceId`**     | <code>string</code>                                                   | The ID of the device to use (obtained from [requestDevice](#requestDevice) or [requestLEScan](#requestLEScan)) |
-| **`onDisconnect`** | <code>((deviceId: string) =&gt; void)</code>                          | Optional disconnect callback function that will be used when the device disconnects                            |
+| **`onDisconnect`** | <code>((deviceId: string, gattStatus?: number) =&gt; void)</code>     | Optional disconnect callback function that will be used when the device disconnects                            |
 | **`options`**      | <code><a href="#connectclientoptions">ConnectClientOptions</a></code> | Options for plugin call                                                                                        |
 
 ---

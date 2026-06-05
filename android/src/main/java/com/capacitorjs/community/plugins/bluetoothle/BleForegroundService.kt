@@ -190,13 +190,13 @@ class BleForegroundService : Service() {
      * @param onDisconnect callback invoked when the device disconnects unexpectedly
      * @return the Device, or null if deviceId is invalid or BT is unavailable
      */
-    fun createDevice(deviceId: String, onDisconnect: () -> Unit): Device? {
+    fun createDevice(deviceId: String, onDisconnect: (Int) -> Unit): Device? {
         val adapter = bluetoothAdapter ?: return null
         serviceDeviceMap[deviceId]?.let { return it }
         return try {
-            val device = Device(this, adapter, deviceId) {
+            val device = Device(this, adapter, deviceId) { status ->
                 serviceDeviceMap.remove(deviceId)
-                onDisconnect()
+                onDisconnect(status)
                 checkAndStopSelf()
             }
             serviceDeviceMap[deviceId] = device

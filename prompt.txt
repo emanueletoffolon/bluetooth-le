@@ -1,0 +1,116 @@
+You are tasked with implementing an Android Foreground Service for BLE scanning
+in the `capacitor-community/bluetooth-le` Capacitor plugin. The key insight from
+production experience is that the Bluetooth connection/scanning must be
+**initiated and managed FROM WITHIN the Foreground Service itself** — not just
+having a Foreground Service running alongside existing BLE code.
+
+## Context
+
+- Plugin: `capacitor-community/bluetooth-le`
+- Target: Android only
+- Goal: Enable BLE scanning to work in background and during device standby
+- Constraint: The BLE operations (scan, connect) must be owned by the Foreground
+Service, not delegated to it
+
+## What needs to be implemented
+
+### 1. Create `BleForgroundService.kt`
+Create a new file at `android/src/main/java/com/capacitorjs/plugins/bluetoothle/BleForegroundService.kt`
+
+Implement a `Service` (not IntentService) that:
+- Extends `Service` and implements the BLE scanning logic internally
+- Holds a reference to `BluetoothLeScanner` and manages scan lifecycle
+- Creates a persistent notification (required for Foreground Services):
+- Notification channel ID: `"ble_foreground_service"`
+- Notification channel name: `"BLE Background Scanning"`
+- Importance: `NotificationManager.IMPORTANCE_LOW`
+- Notification title: `"Bluetooth scanning active"`
+- Use `startForeground(NOTIFICATION_ID, notification)` in `onStartCommand`
+- Exposes a `Binder` (`BleForegroundServiceBinder`) for the plugin to bind to
+- Implements these internal methods (called via binder):
+- `startScan(filters, settings, callback)` — starts BLE scan
+- `stopScan()` — stops BLE scan
+- `connect(deviceId, callback)` — connects to a GATT device
+- `disconnect(deviceId)` — disconnects
+- Manages `BluetoothGatt` connections in a `Map<String, BluetoothGatt>`
+- Handles `BluetoothGattCallback` internally
+- Calls `stopForeground(true)` + `stopSelf()` when no active scans or connections
+
+### 2. Modify `BluetoothLe.kt` (main plugin file)
+- Add `ServiceConnection` to bind/unbind `BleForegroundService`
+- Add a `isForegroundServiceEnabled: Boolean` flag (read from plugin config)
+- Add a new plugin method `startForegroundService()` / `stopForegroundService()`
+- When `isForegroundServiceEnabled` is true:
+- Route `startScan()` calls through the bound service's binder
+- Route `connect()` calls through the bound service's binder
+- Do NOT call the existing BleClient methods directly for these operations
+- When the service is not enabled, fall back to existing behavior (no breaking changes)
+
+### 3. Modify `AndroidManifest.xml`
+Add inside `<application>`:
+```xml
+<service
+android:name=".BleForegroundService"
+android:enabled="true"
+android:exported="false"
+android:foregroundServiceType="connectedDevice" />
+```
+
+Add permissions (if not already present):
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+```
+
+### 4. Modify `BluetoothLePlugin.kt` (the @CapacitorPlugin entry point)
+- Expose two new `@PluginMethod` calls:
+- `startForegroundService(call)` — binds and starts the service, resolves when bound
+- `stopForegroundService(call)` — unbinds and stops the service
+- These should be callable from the JS/TS layer
+
+### 5. Update TypeScript definitions
+In `src/definitions.ts`, add to the plugin interface:
+```typescript
+startForegroundService(): Promise<void>;
+stopForegroundService(): Promise<void>;
+```
+
+In `src/bleClient.ts`, implement the two new methods delegating to `BluetoothLe`.
+
+## Critical implementation notes
+
+- The BLE scan/connect must START from within the service context
+(`this` = Service), not be passed in from outside. This is the key to making
+background scanning work on Android.
+- Use `bindService()` with `BIND_AUTO_CREATE` and wait for `onServiceConnected`
+before resolving the `startForegroundService` promise.
+- The `ScanCallback` and `BluetoothGattCallback` instances must be created inside
+the Service class.
+- Target API 34+: use `ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE` in
+`startForeground()` call.
+- Keep all existing plugin methods working unchanged when the foreground service
+is not active (backward compatibility required).
+- Add a README section explaining that `startForegroundService()` must be called
+before `requestLEScan()` and `connect()` for background scanning to work.
+
+## File structure summary
+
+Files to CREATE:
+- `android/src/main/java/com/capacitorjs/plugins/bluetoothle/BleForegroundService.kt`
+
+Files to MODIFY:
+- `android/src/main/java/com/capacitorjs/plugins/bluetoothle/BluetoothLePlugin.kt`
+- `android/src/main/java/com/capacitorjs/plugins/bluetoothle/BluetoothLe.kt`
+- `android/src/main/AndroidManifest.xml`
+- `src/definitions.ts`
+- `src/bleClient.ts`
+
+## Validation checklist
+After implementation, verify:
+- [ ] App can scan for BLE devices with screen off
+- [ ] App can maintain GATT connection during device standby
+- [ ] Foreground notification appears when service is active
+- [ ] `stopForegroundService()` cleanly stops scan, disconnects all GATT,
+  removes notification
+- [ ] Existing behavior unchanged when `startForegroundService()` is not called
+- [ ] No memory leaks: all GATT callbacks properly cleaned up on disconnect

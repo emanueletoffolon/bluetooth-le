@@ -675,10 +675,10 @@ class BluetoothLe : Plugin() {
             assertBluetoothAdapter(call) ?: return
             val deviceId = getDeviceId(call) ?: return
             val device = deviceMap.getOrElse(deviceId) {
-                val newDevice = service.createDevice(deviceId) {
+                val newDevice = service.createDevice(deviceId) { status ->
                     deviceMap.remove(deviceId)
                     foregroundServiceDeviceIds.remove(deviceId)
-                    onDisconnect(deviceId)
+                    onDisconnect(deviceId, status)
                 }
                 if (newDevice == null) {
                     call.reject("Invalid deviceId")
@@ -710,9 +710,11 @@ class BluetoothLe : Plugin() {
         }
     }
 
-    private fun onDisconnect(deviceId: String) {
+    private fun onDisconnect(deviceId: String, gattStatus: Int) {
         try {
-            notifyListeners("disconnected|${deviceId}", null)
+            val data = JSObject()
+            data.put("gattStatus", gattStatus)
+            notifyListeners("disconnected|${deviceId}", data)
         } catch (e: ConcurrentModificationException) {
             Logger.error(TAG, "Error in notifyListeners: ${e.localizedMessage}", e)
         }
@@ -1269,8 +1271,8 @@ class BluetoothLe : Plugin() {
         return try {
             val newDevice = Device(
                 activity.applicationContext, bluetoothAdapter!!, deviceId
-            ) {
-                onDisconnect(deviceId)
+            ) { status ->
+                onDisconnect(deviceId, status)
             }
             deviceMap[deviceId] = newDevice
             newDevice
